@@ -15,7 +15,7 @@ class Token():
         return [self.num, self.input]
     def __repr__(self) -> str:
         num = str(self.num)
-        display = repr(self.input).rstrip('.0')
+        display = self.input if self.num == Token.number else repr(self.input)
         return '[' + num + ', ' + display + ']'
 
 class BinaryOperation():
@@ -44,11 +44,11 @@ class String():
 
 class Number():
     def __init__(self, value) -> None:
-        self.value = float(value)
+        self.value = value
     def __str__(self) -> str:
-        return str(self.value)
-    def value(self):
         return self.value
+    def value(self):
+        return float(self.value)
 
 class Call():
     def __init__(self, string, parameters) -> None:
@@ -71,12 +71,16 @@ class Lexing():
         string_buffer = ""
         digit_status = digit_status_start
         ret = []
+        skip_once = False
         for offset in range(0, len(source)):
+            if skip_once:
+                skip_once = False
+                continue
             char = str(source[offset])
             if char == '(':
                 if len(digit_buffer) > 0:
                     digit_status = digit_status_start
-                    ret.append(Token([Token.number, float(digit_buffer)]))
+                    ret.append(Token([Token.number, digit_buffer]))
                     digit_buffer = ""
                 if len(string_buffer) > 0:
                     ret.append(Token([Token.string, string_buffer]))
@@ -85,7 +89,7 @@ class Lexing():
             elif char == ')':
                 if len(digit_buffer) > 0:
                     digit_status = digit_status_start
-                    ret.append(Token([Token.number, float(digit_buffer)]))
+                    ret.append(Token([Token.number, digit_buffer]))
                     digit_buffer = ""
                 if len(string_buffer) > 0:
                     ret.append(Token([Token.string, string_buffer]))
@@ -94,7 +98,7 @@ class Lexing():
             elif char in ['+', '-', '*', '/']:
                 if len(digit_buffer) > 0:
                     digit_status = digit_status_start
-                    ret.append(Token([Token.number, float(digit_buffer)]))
+                    ret.append(Token([Token.number, digit_buffer]))
                     digit_buffer = ""
                 if len(string_buffer) > 0:
                     ret.append(Token([Token.string, string_buffer]))
@@ -116,17 +120,17 @@ class Lexing():
                 if len(source) > offset + 1 and source[offset + 1] == '=':
                     if len(digit_buffer) > 0:
                         digit_status = digit_status_start
-                        ret.append(Token([Token.number, float(digit_buffer)]))
+                        ret.append(Token([Token.number, digit_buffer]))
                         digit_buffer = ""
                     if len(string_buffer) > 0:
                         ret.append(Token([Token.string, string_buffer]))
                         string_buffer = ""
                     ret.append([Token.compare_op, char + '='])
-                    offset += 1
+                    skip_once = True
                     continue
                 if len(digit_buffer) > 0:
                     digit_status = digit_status_start
-                    ret.append(Token([Token.number, float(digit_buffer)]))
+                    ret.append(Token([Token.number, digit_buffer]))
                     digit_buffer = ""
                 if len(string_buffer) > 0:
                     ret.append(Token([Token.string, string_buffer]))
@@ -137,20 +141,20 @@ class Lexing():
             elif char.isspace():
                 if len(digit_buffer) > 0:
                     digit_status = digit_status_start
-                    ret.append(Token([Token.number, float(digit_buffer)]))
+                    ret.append(Token([Token.number, digit_buffer]))
                     digit_buffer = ""
                 if len(string_buffer) > 0:
                     ret.append(Token([Token.string, string_buffer]))
                     string_buffer = ""
             else:
                 raise ValueError("unexpected character '" + char + "'")
-            if len(digit_buffer) > 0:
-                digit_status = digit_status_start
-                ret.append(Token([Token.number, float(digit_buffer)]))
-                digit_buffer = ""
-            if len(string_buffer) > 0:
-                ret.append(Token([Token.string, string_buffer]))
-                string_buffer = ""
+        if len(digit_buffer) > 0:
+            digit_status = digit_status_start
+            ret.append(Token([Token.number, digit_buffer]))
+            digit_buffer = ""
+        if len(string_buffer) > 0:
+            ret.append(Token([Token.string, string_buffer]))
+            string_buffer = ""
         return ret
 
     def serialize_tokens(tokens) -> str:
@@ -256,7 +260,9 @@ class Ast():
         return Ast.parse_compare_operation(tokens)
 
     def format_tree(ast_node):
-        return Ast.format_tree_helper(ast_node)
+        lines = []        
+        Ast.format_tree_helper(ast_node, lines);
+        return '\n'.join(lines)
 
     def format_tree_helper_append(value, lines = [], ptr = (0, 0)):
         (x, y) = ptr
@@ -265,38 +271,44 @@ class Ast():
         for _ in range(len(lines[x]), y):
             lines[x] += " "
         for i in range(0, len(value)):
-            if y < len(lines[x]):
-                lines[x] = lines[x][:y] + value[i] + lines[x][y + 1:]
+            cursor = i + y
+            if cursor < len(lines[x]):
+                lines[x] = lines[x][:cursor] + value[i] + lines[x][cursor + 1:]
             else:
                 lines[x] += value[i]
             
-        return (x, y + 1)
+        return (x, y + len(value))
 
     def format_tree_helper(ast_node, lines = [], ptr = (0, 0)):
         (x, y) = ptr
-        if ast_node is GroupingOperation:
+        if isinstance(ast_node, GroupingOperation):
+            Ast.format_tree_helper_append("{(", lines, (x, y))
+            (_, y) = Ast.format_tree_helper_append(Ast.format_tree(ast_node.content), (x, y + 1))
+            Ast.format_tree_helper_append(")}", lines, (x, y))
+        elif isinstance(ast_node, BinaryOperation):
             Ast.format_tree_helper_append("{", lines, (x, y))
-            (_, y) = Ast.format_tree_helper_append(Ast.format_tree(ast_node.content), (x, y))
+            (_, y) = Ast.format_tree_helper_append(Ast.format_tree(ast_node.lhs), lines, (x, y))
+            (_, y) = Ast.format_tree_helper_append(str(ast_node.op), lines, (x, y))
+            (_, y) = Ast.format_tree_helper_append(Ast.format_tree(ast_node.rhs), lines, (x, y))
             Ast.format_tree_helper_append("}", lines, (x, y))
-        elif ast_node is BinaryOperation:
+        elif isinstance(ast_node, CompareOperation):
             Ast.format_tree_helper_append("{", lines, (x, y))
-            (_, y) = Ast.format_tree_helper_append(Ast.format_tree(ast_node.lhs), (x, y))
-            (_, y) = Ast.format_tree_helper_append(str(ast_node.op), (x, y))
-            (_, y) = Ast.format_tree_helper_append(Ast.format_tree(ast_node.rhs), (x, y))
-            Ast.format_tree_helper_append("}", lines, (x, y))
-        elif ast_node is CompareOperation:
-            Ast.format_tree_helper_append("{", lines, (x, y))
-            (_, y) = Ast.format_tree_helper_append(Ast.format_tree(ast_node.lhs), (x, y))
-            (_, y) = Ast.format_tree_helper_append(str(ast_node.op), (x, y))
-            (_, y) = Ast.format_tree_helper_append(Ast.format_tree(ast_node.rhs), (x, y))
+            (_, y) = Ast.format_tree_helper_append(Ast.format_tree(ast_node.lhs), lines, (x, y + 1))
+            (_, y) = Ast.format_tree_helper_append(str(ast_node.op), lines, (x, y))
+            (_, y) = Ast.format_tree_helper_append(Ast.format_tree(ast_node.rhs), lines, (x, y))
             Ast.format_tree_helper_append("}", lines, (x, y))
         else:
-            Ast.format_tree_helper_append(str(ast_node), lines, (x, y))
+            Ast.format_tree_helper_append('{' + str(ast_node) + '}', lines, (x, y))
 
-# source = '((折线顶(0) - 折线底(0)) / 折线底(0)) >= 0.02'
+
 source = '1>2'
-
 tokens = Lexing.lex(source)
 assert(Lexing.serialize_tokens(tokens) == "[[1, 1], [5, '>'], [1, 2]]")
+tree = Ast.parse(tokens)
+print(Ast.format_tree(tree))
+
+source = '((折线顶(0) - 折线底(0)) / 折线底(0)) >= 0.02'
+tokens = Lexing.lex(source)
+assert(Lexing.serialize_tokens(tokens) == "[[3, '('], [3, '('], [0, '折线顶'], [3, '('], [1, 0], [4, ')'], [2, '-'], [0, '折线底'], [3, '('], [1, 0], [4, ')'], [4, ')'], [2, '/'], [0, '折线底'], [3, '('], [1, 0], [4, ')'], [4, ')'], [5, '>='], [1, 0.02]]")
 tree = Ast.parse(tokens)
 print(Ast.format_tree(tree))
