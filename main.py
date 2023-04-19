@@ -103,7 +103,7 @@ class Lexing():
                 if len(string_buffer) > 0:
                     ret.append(Token([Token.string, string_buffer]))
                     string_buffer = ""
-                ret.append([Token.arithmetic_op, char])
+                ret.append(Token([Token.arithmetic_op, char]))
             elif char.isdigit():
                 if digit_buffer == "0":
                     raise ValueError("unexpected character '" + char + "'")
@@ -125,7 +125,7 @@ class Lexing():
                     if len(string_buffer) > 0:
                         ret.append(Token([Token.string, string_buffer]))
                         string_buffer = ""
-                    ret.append([Token.compare_op, char + '='])
+                    ret.append(Token([Token.compare_op, char + '=']))
                     skip_once = True
                     continue
                 if len(digit_buffer) > 0:
@@ -200,41 +200,43 @@ class Ast():
             rslt_lhs = Ast.parse_grouping_operation(tokens)
             if rslt_lhs is None:
                 return None
-        (lhs, num_consumed) = rslt_lhs
-        if len(tokens) == num_consumed:
+        (lhs, lhs_num_consumed) = rslt_lhs
+        if len(tokens) == lhs_num_consumed:
             return None
-        op = tokens[num_consumed]
+        op = tokens[lhs_num_consumed]
         if op.num != Token.arithmetic_op:
             return None
-        rslt_rhs = Ast.parse_atom(tokens[num_consumed + 1])
+        rslt_rhs = Ast.parse_atom(tokens[lhs_num_consumed + 1:])
         if rslt_rhs is None:
-            rslt_rhs = Ast.parse_grouping_operation(tokens[num_consumed + 1])
+            rslt_rhs = Ast.parse_grouping_operation(tokens[lhs_num_consumed + 1:])
             if rslt_rhs is None:
                 return None
-        (rhs, num_consumed) = rslt_rhs
-        return BinaryOperation(op.input, lhs, rhs)
+        (rhs, rhs_num_consumed) = rslt_rhs
+        return (BinaryOperation(op.input, lhs, rhs), lhs_num_consumed + 1 + rhs_num_consumed)
 
     def parse_grouping_operation(tokens):
         if len(tokens) == 0:
             return None
         if tokens[0].input != '(':
             return None
-        rslt_value = Ast.parse_atom(tokens[1:])
+        rslt_value = Ast.parse_binary_operation(tokens[1:])
         if rslt_value is None:
-            rslt_value = Ast.parse_binary_operation(tokens[1:])
+            rslt_value = Ast.parse_atom(tokens[1:])
         if rslt_value is None:
             return None
         (value, num_consumed) = rslt_value
-        if 1 + num_consumed + 1 >= len(tokens) and tokens[1 + num_consumed].input == ')':
+        if 1 + num_consumed + 1 <= len(tokens) and tokens[1 + num_consumed].input == ')':
             return (GroupingOperation(value), 1 + num_consumed + 1)
         return None
 
     def parse_call(tokens):
-        string = Ast.parse_string(tokens)
-        if string is not None:
-            parameters = Ast.parse_grouping_operation(tokens[1:])
-            if parameters is not None:
-                return Call(string, parameters)
+        rslt_string = Ast.parse_string(tokens)
+        if rslt_string is not None:
+            (string, _) = rslt_string
+            rslt_parameters = Ast.parse_grouping_operation(tokens[1:])
+            if rslt_parameters is not None:
+                (parameters, num_consumed) = rslt_parameters
+                return (Call(string.string, parameters), num_consumed + 1)
         return None
 
     def parse_compare_operation(tokens):
@@ -282,18 +284,23 @@ class Ast():
     def format_tree_helper(ast_node, lines = [], ptr = (0, 0)):
         (x, y) = ptr
         if isinstance(ast_node, GroupingOperation):
-            Ast.format_tree_helper_append("{(", lines, (x, y))
-            (_, y) = Ast.format_tree_helper_append(Ast.format_tree(ast_node.content), (x, y + 1))
+            (_, y) = Ast.format_tree_helper_append("{(", lines, (x, y))
+            (_, y) = Ast.format_tree_helper_append(Ast.format_tree(ast_node.content), lines, (x, y))
             Ast.format_tree_helper_append(")}", lines, (x, y))
+        elif isinstance(ast_node, Call):
+            (_, y) = Ast.format_tree_helper_append("{", lines, (x, y))
+            (_, y) = Ast.format_tree_helper_append(ast_node.string, lines, (x, y))
+            (_, y) = Ast.format_tree_helper_append(Ast.format_tree(ast_node.parameters), lines, (x, y))
+            Ast.format_tree_helper_append("}", lines, (x, y))
         elif isinstance(ast_node, BinaryOperation):
-            Ast.format_tree_helper_append("{", lines, (x, y))
+            (_, y) = Ast.format_tree_helper_append("{", lines, (x, y))
             (_, y) = Ast.format_tree_helper_append(Ast.format_tree(ast_node.lhs), lines, (x, y))
             (_, y) = Ast.format_tree_helper_append(str(ast_node.op), lines, (x, y))
             (_, y) = Ast.format_tree_helper_append(Ast.format_tree(ast_node.rhs), lines, (x, y))
             Ast.format_tree_helper_append("}", lines, (x, y))
         elif isinstance(ast_node, CompareOperation):
-            Ast.format_tree_helper_append("{", lines, (x, y))
-            (_, y) = Ast.format_tree_helper_append(Ast.format_tree(ast_node.lhs), lines, (x, y + 1))
+            (_, y) = Ast.format_tree_helper_append("{", lines, (x, y))
+            (_, y) = Ast.format_tree_helper_append(Ast.format_tree(ast_node.lhs), lines, (x, y))
             (_, y) = Ast.format_tree_helper_append(str(ast_node.op), lines, (x, y))
             (_, y) = Ast.format_tree_helper_append(Ast.format_tree(ast_node.rhs), lines, (x, y))
             Ast.format_tree_helper_append("}", lines, (x, y))
@@ -306,6 +313,16 @@ tokens = Lexing.lex(source)
 assert(Lexing.serialize_tokens(tokens) == "[[1, 1], [5, '>'], [1, 2]]")
 tree = Ast.parse(tokens)
 print(Ast.format_tree(tree))
+
+print()
+
+source = '(1+2)>0'
+tokens = Lexing.lex(source)
+assert(Lexing.serialize_tokens(tokens) == "[[3, '('], [1, 1], [2, '+'], [1, 2], [4, ')'], [5, '>'], [1, 0]]")
+tree = Ast.parse(tokens)
+print(Ast.format_tree(tree))
+
+print()
 
 source = '((折线顶(0) - 折线底(0)) / 折线底(0)) >= 0.02'
 tokens = Lexing.lex(source)
