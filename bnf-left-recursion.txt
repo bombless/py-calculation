@@ -1,0 +1,5 @@
+bo_first_rank = binary_operation_first_rank
+bo_second_rank = binary_operation_second_rank
+bo_first_rank = (bo_first_rank | grouping_operation | atom) ('*' | '/') (atom | grouping_operation)
+bo_second_rank = (bo_second_rank | bo_first_rank | grouping_operation | atom) ('+' | '-') (atom | bo_first_rank | grouping_operation)
+atom = (number | call)
