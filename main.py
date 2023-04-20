@@ -23,23 +23,24 @@ class BinaryOperation():
         self.op = op
         self.lhs = lhs
         self.rhs = rhs
+    def __repr__(self) -> str:
+        return repr(self.lhs) + self.op + repr(self.rhs)
 
 class GroupingOperation():
     def __init__(self, content) -> None:
         self.content = content
-
-class CompareOperation():
-    def __init__(self, op, lhs, rhs) -> None:
-        self.op = op
-        self.lhs = lhs
-        self.rhs = rhs
-
+    def __repr__(self) -> str:
+        return str(self)
+    def __str__(self) -> str:
+        return '(' + repr(self.content) + ')' if self.content is not None else '()'
 
 class String():
     def __init__(self, string) -> None:
         self.string = string
     def __str__(self) -> str:
         return self.string
+    def __repr__(self) -> str:
+        return str(self)
     def value(self) -> str:
         return self.string
 
@@ -47,12 +48,16 @@ class Variable():
     def __init__(self, string) -> None:
         self.string = string
     def __str__(self) -> str:
-        return self.string
+        return self.string.string
+    def __repr__(self) -> str:
+        return str(self)
 
 class Number():
     def __init__(self, value) -> None:
         self.value = value
     def __str__(self) -> str:
+        return self.value
+    def __repr__(self) -> str:
         return self.value
     def value(self):
         return float(self.value)
@@ -61,8 +66,8 @@ class Call():
     def __init__(self, string, parameters) -> None:
         self.string = string
         self.parameters = parameters
-
-
+    def __repr__(self) -> str:
+        return self.string + repr(self.parameters)
 
 class DigitStatusStart():
     pass
@@ -352,7 +357,7 @@ class Ast():
         if rslt_rhs is None:
             return None
         (rhs, num_consumed) = rslt_rhs
-        return (CompareOperation(op.input, lhs, rhs), offset + num_consumed)
+        return (BinaryOperation(op.input, lhs, rhs), offset + num_consumed)
 
     def parse_grouping_compare_operation_ext(tokens):
         offset = 0
@@ -383,80 +388,58 @@ class Ast():
         return Ast.parse_logic(tokens)
 
     def format_tree(ast_node):
-        lines = []        
-        Ast.format_tree_helper(ast_node, lines);
-        return '\n'.join(lines)
-
-    def format_tree_helper_append(value, lines = [], ptr = (0, 0)):
-        (x, y) = ptr
-        for _ in range(len(lines), x + 1):
-            lines.append("")
-        for _ in range(len(lines[x]), y):
-            lines[x] += " "
-        for i in range(0, len(value)):
-            cursor = i + y
-            if cursor < len(lines[x]):
-                lines[x] = lines[x][:cursor] + value[i] + lines[x][cursor + 1:]
+        from ascii_tree import make_and_print_tree
+        def get_value(ast_node):
+            if isinstance(ast_node, BinaryOperation):
+                return str(ast_node.lhs) + ast_node.op + str(ast_node.rhs)
+            elif isinstance(ast_node, Variable):
+                return ast_node.string
+            elif isinstance(ast_node, GroupingOperation):
+                return str(ast_node.content)
             else:
-                lines[x] += value[i]
+                return repr(ast_node)
+        def get_children(ast_node):
+            if isinstance(ast_node, BinaryOperation):
+                return [ast_node.lhs, ast_node.op, ast_node.rhs]
+            if isinstance(ast_node, GroupingOperation):
+                return []
+            else:
+                return []
+        make_and_print_tree(ast_node, get_value, get_children)
             
-        return (x, y + len(value))
-
-    def format_tree_helper(ast_node, lines = [], ptr = (0, 0)):
-        (x, y) = ptr
-        if isinstance(ast_node, GroupingOperation):
-            (_, y) = Ast.format_tree_helper_append("{(", lines, (x, y))
-            (_, y) = Ast.format_tree_helper_append(Ast.format_tree(ast_node.content), lines, (x, y))
-            Ast.format_tree_helper_append(")}", lines, (x, y))
-        elif isinstance(ast_node, Call):
-            (_, y) = Ast.format_tree_helper_append("{", lines, (x, y))
-            (_, y) = Ast.format_tree_helper_append(ast_node.string, lines, (x, y))
-            (_, y) = Ast.format_tree_helper_append(Ast.format_tree(ast_node.parameters), lines, (x, y))
-            Ast.format_tree_helper_append("}", lines, (x, y))
-        elif isinstance(ast_node, BinaryOperation):
-            (_, y) = Ast.format_tree_helper_append("{", lines, (x, y))
-            (_, y) = Ast.format_tree_helper_append(Ast.format_tree(ast_node.lhs), lines, (x, y))
-            (_, y) = Ast.format_tree_helper_append(str(ast_node.op), lines, (x, y))
-            (_, y) = Ast.format_tree_helper_append(Ast.format_tree(ast_node.rhs), lines, (x, y))
-            Ast.format_tree_helper_append("}", lines, (x, y))
-        elif isinstance(ast_node, CompareOperation):
-            (_, y) = Ast.format_tree_helper_append("{", lines, (x, y))
-            (_, y) = Ast.format_tree_helper_append(Ast.format_tree(ast_node.lhs), lines, (x, y))
-            (_, y) = Ast.format_tree_helper_append(str(ast_node.op), lines, (x, y))
-            (_, y) = Ast.format_tree_helper_append(Ast.format_tree(ast_node.rhs), lines, (x, y))
-            Ast.format_tree_helper_append("}", lines, (x, y))
-        else:
-            Ast.format_tree_helper_append('{' + str(ast_node) + '}', lines, (x, y))
 
 
 source = '(v1())>2'
 tokens = Lexing.lex(source)
 tree = Ast.parse(tokens)
+
 print(Ast.format_tree(tree))
 
 print()
 
-# source = 'v1()>2'
-# tokens = Lexing.lex(source)
-# assert(Lexing.serialize_tokens(tokens) == "[[0, 'v1'], [3, '('], [4, ')'], [5, '>'], [1, 2]]")
+source = 'v1()>2'
+tokens = Lexing.lex(source)
+assert(Lexing.serialize_tokens(tokens) == "[[0, 'v1'], [3, '('], [4, ')'], [5, '>'], [1, 2]]")
 
-# print()
+print()
 
-# source = '1>2'
-# tokens = Lexing.lex(source)
-# assert(Lexing.serialize_tokens(tokens) == "[[1, 1], [5, '>'], [1, 2]]")
-# tree = Ast.parse(tokens)
+source = '1>2'
+tokens = Lexing.lex(source)
+assert(Lexing.serialize_tokens(tokens) == "[[1, 1], [5, '>'], [1, 2]]")
+tree = Ast.parse(tokens)
+
 # print(Ast.format_tree(tree))
 
 # print()
 
-# source = '1+2>0'
-# tokens = Lexing.lex(source)
-# assert(Lexing.serialize_tokens(tokens) == "[[1, 1], [2, '+'], [1, 2], [5, '>'], [1, 0]]")
-# tree = Ast.parse(tokens)
-# print(Ast.format_tree(tree))
+source = '1+2>0'
+tokens = Lexing.lex(source)
+assert(Lexing.serialize_tokens(tokens) == "[[1, 1], [2, '+'], [1, 2], [5, '>'], [1, 0]]")
+tree = Ast.parse(tokens)
 
-# print()
+print(Ast.format_tree(tree))
+
+print()
 
 # source = '(1+2)>0'
 # tokens = Lexing.lex(source)
@@ -472,10 +455,11 @@ print()
 
 # print()
 
-# source = '(折线顶(0) - 折线底(0)) / 折线底(0) >= 0.02'
-# tokens = Lexing.lex(source)
-# assert(Lexing.serialize_tokens(tokens) == "[[3, '('], [0, '折线顶'], [3, '('], [1, 0], [4, ')'], [2, '-'], [0, '折线底'], [3, '('], [1, 0], [4, ')'], [4, ')'], [2, '/'], [0, '折线底'], [3, '('], [1, 0], [4, ')'], [5, '>='], [1, 0.02]]")
-# tree = Ast.parse(tokens)
+source = '(折线顶(0) - 折线底(0)) / 折线底(0) >= 0.02'
+tokens = Lexing.lex(source)
+assert(Lexing.serialize_tokens(tokens) == "[[3, '('], [0, '折线顶'], [3, '('], [1, 0], [4, ')'], [2, '-'], [0, '折线底'], [3, '('], [1, 0], [4, ')'], [4, ')'], [2, '/'], [0, '折线底'], [3, '('], [1, 0], [4, ')'], [5, '>='], [1, 0.02]]")
+tree = Ast.parse(tokens)
+
 # print(Ast.format_tree(tree))
 
 # print()
@@ -483,4 +467,5 @@ print()
 source = '(Test1() == hello) & ((top(0) - bottom(0)) / bottom(0) > 0.1)'
 tokens = Lexing.lex(source)
 tree = Ast.parse(tokens)
+
 print(Ast.format_tree(tree))
