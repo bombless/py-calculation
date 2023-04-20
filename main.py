@@ -34,13 +34,20 @@ class CompareOperation():
         self.lhs = lhs
         self.rhs = rhs
 
+
 class String():
     def __init__(self, string) -> None:
         self.string = string
     def __str__(self) -> str:
-        self.string
+        return self.string
     def value(self) -> str:
-        self.string
+        return self.string
+
+class Variable():
+    def __init__(self, string) -> None:
+        self.string = string
+    def __str__(self) -> str:
+        return self.string
 
 class Number():
     def __init__(self, value) -> None:
@@ -105,6 +112,9 @@ class Lexing():
                     string_buffer = ""
                 ret.append(Token([Token.arithmetic_op, char]))
             elif char.isdigit():
+                if len(string_buffer) > 0:
+                    string_buffer += char
+                    continue
                 if digit_buffer == "0":
                     raise ValueError("unexpected character '" + char + "'")
                 digit_buffer += char
@@ -116,7 +126,7 @@ class Lexing():
                     raise ValueError("unexpected character '.'")
             elif char.isalpha() or u'\u4e00' <= char <= u'\u9fff':
                 string_buffer += char
-            elif char in ['>', '<']:
+            elif char in ['>', '=', '<']:
                 if len(source) > offset + 1 and source[offset + 1] == '=':
                     if len(digit_buffer) > 0:
                         digit_status = digit_status_start
@@ -136,8 +146,8 @@ class Lexing():
                     ret.append(Token([Token.string, string_buffer]))
                     string_buffer = ""
                 ret.append(Token([Token.compare_op, char]))
-            elif char == '=':
-                ret.append(Token([Token.compare_op, char]))
+            elif char in ['&', '|']:
+                ret.append(Token([Token.arithmetic_op, char]))
             elif char.isspace():
                 if len(digit_buffer) > 0:
                     digit_status = digit_status_start
@@ -187,6 +197,9 @@ class Ast():
         if tokens[0].num == Token.string:
             return (String(tokens[0].input), 1)
 
+    def parse_variable(tokens):
+        return Ast.parse_string(tokens)
+
     def parse_atom(tokens):
         rslt_number = Ast.parse_number(tokens)
         if rslt_number is not None:
@@ -195,7 +208,10 @@ class Ast():
         if rslt_call is not None:
             return rslt_call
         rslt_grouping = Ast.parse_grouping_operation(tokens)
-        return rslt_grouping
+        if rslt_grouping is not None:
+            return rslt_grouping
+        rslt_variable = Ast.parse_variable(tokens)
+        return rslt_variable
 
     def parse_binary_operation_1st_partial_ext(tokens):
         offset = 0
@@ -230,9 +246,9 @@ class Ast():
         if rslt_lhs is None:
             return None
         (lhs, lhs_num_consumed) = rslt_lhs
-        if len(tokens) == lhs_num_consumed:
-            return (lhs, lhs_num_consumed)
         while True:
+            if lhs_num_consumed == len(tokens):
+                return rslt_lhs
             rslt_tail = Ast.parse_binary_operation_1st_partial_ext(tokens[lhs_num_consumed:])
             if rslt_tail is not None:
                 (tail, tail_consumed) = rslt_tail
@@ -250,6 +266,37 @@ class Ast():
             lhs_num_consumed = rhs_num_consumed + 1 + lhs_num_consumed
             lhs = BinaryOperation(op.input, lhs, rhs)
             rslt_lhs = (lhs, lhs_num_consumed)
+
+    def parse_logic_ext(tokens):
+        rslt_lhs = Ast.parse_grouping_compare_operation(tokens)
+        if rslt_lhs is None:
+            rslt_lhs = Ast.parse_call(tokens)
+        if rslt_lhs is None:
+            rslt_lhs = Ast.parse_compare_operation(tokens)
+        if rslt_lhs is None:
+            return None
+        (lhs, lhs_num_consumed) = rslt_lhs
+        while True:
+            if lhs_num_consumed == len(tokens):
+                return rslt_lhs
+            op = tokens[lhs_num_consumed]
+            if op.num != Token.arithmetic_op or op.input not in ['&', '|']:
+                return rslt_lhs
+            rslt_rhs = Ast.parse_grouping_compare_operation(tokens[lhs_num_consumed + 1:])
+            if rslt_rhs is None:
+                rslt_rhs = Ast.parse_call(tokens[lhs_num_consumed + 1:])
+            if rslt_rhs is None:
+                rslt_rhs = Ast.parse_compare_operation(tokens[lhs_num_consumed + 1:])
+            if rslt_rhs is None:
+                raise ValueError("unexpected tokens " + repr(tokens[lhs_num_consumed + 1:]) + ", expected compare_operation after " + repr(['&', '|']))
+
+            (rhs, rhs_num_consumed) = rslt_rhs
+            lhs_num_consumed = rhs_num_consumed + 1 + lhs_num_consumed
+            lhs = BinaryOperation(op.input, lhs, rhs)
+            rslt_lhs = (lhs, lhs_num_consumed)
+
+    def parse_logic(tokens):
+        return Ast.parse_logic_ext(tokens)
 
     def parse_binary_operation(tokens):
         return Ast.parse_binary_operation_2nd_ext(tokens)
@@ -270,7 +317,10 @@ class Ast():
                 return (acc, offset + depth) if check_tailing(tokens[offset:], depth) else None
             rslt_value = Ast.parse_binary_operation(tokens[1:])
             if rslt_value is None:
-                return None
+                offset += 1
+                acc = GroupingOperation(None)
+                depth += 1
+                continue
             (value, num_consumed) = rslt_value
             offset += 1 + num_consumed
             acc = GroupingOperation(value)
@@ -304,8 +354,33 @@ class Ast():
         (rhs, num_consumed) = rslt_rhs
         return (CompareOperation(op.input, lhs, rhs), offset + num_consumed)
 
+    def parse_grouping_compare_operation_ext(tokens):
+        offset = 0
+        acc = None
+        depth = 0
+        def check_tailing(tokens, depth):
+            for i in range(0, depth):
+                if tokens[i].input != ')':
+                    return False
+            return True
+        while True:
+            if offset >= len(tokens) or tokens[offset].input != '(':
+                if acc is None:
+                    return None
+                return (acc, offset + depth) if check_tailing(tokens[offset:], depth) else None
+            rslt_value = Ast.parse_compare_operation(tokens[1:])
+            if rslt_value is None:
+                return None
+            (value, num_consumed) = rslt_value
+            offset += 1 + num_consumed
+            acc = GroupingOperation(value)
+            depth += 1
+
+    def parse_grouping_compare_operation(tokens):
+        return Ast.parse_grouping_compare_operation_ext(tokens)
+
     def parse_helper(tokens):
-        return Ast.parse_compare_operation(tokens)
+        return Ast.parse_logic(tokens)
 
     def format_tree(ast_node):
         lines = []        
@@ -354,38 +429,58 @@ class Ast():
             Ast.format_tree_helper_append('{' + str(ast_node) + '}', lines, (x, y))
 
 
-source = '1>2'
-tokens = Lexing.lex(source)
-assert(Lexing.serialize_tokens(tokens) == "[[1, 1], [5, '>'], [1, 2]]")
-tree = Ast.parse(tokens)
-print(Ast.format_tree(tree))
-
-print()
-
-source = '1+2>0'
-tokens = Lexing.lex(source)
-assert(Lexing.serialize_tokens(tokens) == "[[1, 1], [2, '+'], [1, 2], [5, '>'], [1, 0]]")
-tree = Ast.parse(tokens)
-print(Ast.format_tree(tree))
-
-print()
-
-source = '(1+2)>0'
+source = '(v1())>2'
 tokens = Lexing.lex(source)
 tree = Ast.parse(tokens)
 print(Ast.format_tree(tree))
 
 print()
 
-source = '(1)/2>0'
-tokens = Lexing.lex(source)
-tree = Ast.parse(tokens)
-print(Ast.format_tree(tree))
+# source = 'v1()>2'
+# tokens = Lexing.lex(source)
+# assert(Lexing.serialize_tokens(tokens) == "[[0, 'v1'], [3, '('], [4, ')'], [5, '>'], [1, 2]]")
 
-print()
+# print()
 
-source = '(折线顶(0) - 折线底(0)) / 折线底(0) >= 0.02'
+# source = '1>2'
+# tokens = Lexing.lex(source)
+# assert(Lexing.serialize_tokens(tokens) == "[[1, 1], [5, '>'], [1, 2]]")
+# tree = Ast.parse(tokens)
+# print(Ast.format_tree(tree))
+
+# print()
+
+# source = '1+2>0'
+# tokens = Lexing.lex(source)
+# assert(Lexing.serialize_tokens(tokens) == "[[1, 1], [2, '+'], [1, 2], [5, '>'], [1, 0]]")
+# tree = Ast.parse(tokens)
+# print(Ast.format_tree(tree))
+
+# print()
+
+# source = '(1+2)>0'
+# tokens = Lexing.lex(source)
+# tree = Ast.parse(tokens)
+# print(Ast.format_tree(tree))
+
+# print()
+
+# source = '(1)/2>0'
+# tokens = Lexing.lex(source)
+# tree = Ast.parse(tokens)
+# print(Ast.format_tree(tree))
+
+# print()
+
+# source = '(折线顶(0) - 折线底(0)) / 折线底(0) >= 0.02'
+# tokens = Lexing.lex(source)
+# assert(Lexing.serialize_tokens(tokens) == "[[3, '('], [0, '折线顶'], [3, '('], [1, 0], [4, ')'], [2, '-'], [0, '折线底'], [3, '('], [1, 0], [4, ')'], [4, ')'], [2, '/'], [0, '折线底'], [3, '('], [1, 0], [4, ')'], [5, '>='], [1, 0.02]]")
+# tree = Ast.parse(tokens)
+# print(Ast.format_tree(tree))
+
+# print()
+
+source = '(Test1() == hello) & ((top(0) - bottom(0)) / bottom(0) > 0.1)'
 tokens = Lexing.lex(source)
-assert(Lexing.serialize_tokens(tokens) == "[[3, '('], [0, '折线顶'], [3, '('], [1, 0], [4, ')'], [2, '-'], [0, '折线底'], [3, '('], [1, 0], [4, ')'], [4, ')'], [2, '/'], [0, '折线底'], [3, '('], [1, 0], [4, ')'], [5, '>='], [1, 0.02]]")
 tree = Ast.parse(tokens)
 print(Ast.format_tree(tree))

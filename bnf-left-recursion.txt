@@ -1,12 +1,19 @@
 number = ('1'..'9') ('0'..'9')* ('.' ('0'..'9')+)?
-string = (('\u4e00'..'\u9fff') | ('a'..'z') | ('A'..'Z'))+
-atom = (number | call | grouping_operation)
+string = (('\u4e00'..'\u9fff') | ('a'..'z') | ('A'..'Z')) (('\u4e00'..'\u9fff') | ('a'..'z') | ('A'..'Z') | ('0'..'9'))*
+variable = string
+atom = (number | call | grouping_operation | variable)
 
 binary_operation_1st_partial_ext = '1 (~ ('*' | '/') atom) -> '1
 binary_operation_1st = atom binary_operation_1st_partial_ext
 binary_operation_2nd_ext = '1 binary_operation_1st '2 (~ (binary_operation_1st_partial_ext | ('+' | '-') binary_operation_1st)) -> '1 '2
 binary_operation = binary_operation_2nd_ext
-grouping_operation_ext = '1 (~ '(' binary_operation ')') -> '1
+grouping_operation_ext = '1 (~ '(' binary_operation? ')') -> '1
 grouping_operation = grouping_operation_ext
 call = string grouping_operation
-compare_operation = binary_operation ('>' '=' | '<' '=' | '<' | '=' | '>') binary_operation
+compare_operation = binary_operation ('>' '=' | '<' '=' | '=' '=' | '<' | '=' | '>') binary_operation
+
+grouping_compare_operation_ext = '1 (~ '(' compare_operation ')') -> '1
+grouping_compare_operation = grouping_compare_operation_ext
+
+logic_ext = '1 (grouping_compare_operation | call | compare_operation) '2 (~ ('&' | '|') (grouping_compare_operation | call | compare_operation)) -> '1 '2
+logic = logix_ext
