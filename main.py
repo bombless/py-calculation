@@ -192,42 +192,92 @@ class Ast():
         if rslt_number is not None:
             return rslt_number
         rslt_call = Ast.parse_call(tokens)
-        return rslt_call
+        if rslt_call is not None:
+            return rslt_call
+        rslt_grouping = Ast.parse_grouping_operation(tokens)
+        return rslt_grouping
 
-    def parse_binary_operation(tokens):
+    def parse_binary_operation_1st_partial_ext(tokens):
+        offset = 0
+        acc = []
+        while True:
+            op = tokens[offset]
+            if op.num != Token.arithmetic_op or op.input not in ['*', '/']:
+                return None if len(acc) == 0 else (acc, offset)
+            rslt_rhs = Ast.parse_atom(tokens[offset + 1:])
+            if rslt_rhs is None:
+                raise ValueError("unexpected tokens " + repr(tokens[offset + 1:]) + ", expected atom after " + repr(['*', '/']))
+            (rhs, rhs_num_consumed) = rslt_rhs
+            offset = rhs_num_consumed + 1 + offset
+            acc.append((op, rhs))
+
+    def parse_binary_operation_1st(tokens):
+        rslt_head = Ast.parse_atom(tokens)
+        if rslt_head is None:
+            return None
+        (head, head_consumed) = rslt_head
+        rslt_tail = Ast.parse_binary_operation_1st_partial_ext(tokens[head_consumed:])
+        if rslt_tail is None:
+            return rslt_head
+        (tail, tail_consumed) = rslt_tail
+        acc = head
+        for (op, rhs) in tail:
+            acc = BinaryOperation(op.input, acc, rhs)
+        return (acc, head_consumed + tail_consumed)
+
+    def parse_binary_operation_2nd_ext(tokens):
         rslt_lhs = Ast.parse_atom(tokens)
         if rslt_lhs is None:
-            rslt_lhs = Ast.parse_grouping_operation(tokens)
-            if rslt_lhs is None:
-                return None
+            return None
         (lhs, lhs_num_consumed) = rslt_lhs
         if len(tokens) == lhs_num_consumed:
-            return None
-        op = tokens[lhs_num_consumed]
-        if op.num != Token.arithmetic_op:
-            return None
-        rslt_rhs = Ast.parse_atom(tokens[lhs_num_consumed + 1:])
-        if rslt_rhs is None:
-            rslt_rhs = Ast.parse_grouping_operation(tokens[lhs_num_consumed + 1:])
+            return (lhs, lhs_num_consumed)
+        while True:
+            rslt_tail = Ast.parse_binary_operation_1st_partial_ext(tokens[lhs_num_consumed:])
+            if rslt_tail is not None:
+                (tail, tail_consumed) = rslt_tail
+                acc = lhs
+                for (op, rhs) in tail:
+                    acc = BinaryOperation(op.input, acc, rhs)
+                return (acc, lhs_num_consumed + tail_consumed)
+            op = tokens[lhs_num_consumed]
+            if op.num != Token.arithmetic_op or op.input not in ['+', '-']:
+                return rslt_lhs
+            rslt_rhs = Ast.parse_binary_operation_1st(tokens[lhs_num_consumed + 1:])
             if rslt_rhs is None:
+                raise ValueError("unexpected tokens " + repr(tokens[lhs_num_consumed + 1:]) + ", expected atom after " + repr(['+', '-']))
+            (rhs, rhs_num_consumed) = rslt_rhs
+            lhs_num_consumed = rhs_num_consumed + 1 + lhs_num_consumed
+            lhs = BinaryOperation(op.input, lhs, rhs)
+            rslt_lhs = (lhs, lhs_num_consumed)
+
+    def parse_binary_operation(tokens):
+        return Ast.parse_binary_operation_2nd_ext(tokens)
+
+    def parse_grouping_operation_ext(tokens):
+        offset = 0
+        acc = None
+        depth = 0
+        def check_tailing(tokens, depth):
+            for i in range(0, depth):
+                if tokens[i].input != ')':
+                    return False
+            return True
+        while True:
+            if offset >= len(tokens) or tokens[offset].input != '(':
+                if acc is None:
+                    return None
+                return (acc, offset + depth) if check_tailing(tokens[offset:], depth) else None
+            rslt_value = Ast.parse_binary_operation(tokens[1:])
+            if rslt_value is None:
                 return None
-        (rhs, rhs_num_consumed) = rslt_rhs
-        return (BinaryOperation(op.input, lhs, rhs), lhs_num_consumed + 1 + rhs_num_consumed)
+            (value, num_consumed) = rslt_value
+            offset += 1 + num_consumed
+            acc = GroupingOperation(value)
+            depth += 1
 
     def parse_grouping_operation(tokens):
-        if len(tokens) == 0:
-            return None
-        if tokens[0].input != '(':
-            return None
-        rslt_value = Ast.parse_binary_operation(tokens[1:])
-        if rslt_value is None:
-            rslt_value = Ast.parse_atom(tokens[1:])
-        if rslt_value is None:
-            return None
-        (value, num_consumed) = rslt_value
-        if 1 + num_consumed + 1 <= len(tokens) and tokens[1 + num_consumed].input == ')':
-            return (GroupingOperation(value), 1 + num_consumed + 1)
-        return None
+        return Ast.parse_grouping_operation_ext(tokens)
 
     def parse_call(tokens):
         rslt_string = Ast.parse_string(tokens)
@@ -240,9 +290,7 @@ class Ast():
         return None
 
     def parse_compare_operation(tokens):
-        rslt_lhs = Ast.parse_atom(tokens)
-        if rslt_lhs is None:
-            rslt_lhs = Ast.parse_grouping_operation(tokens)
+        rslt_lhs = Ast.parse_binary_operation(tokens)
         if rslt_lhs is None:
             return None
         (lhs, num_consumed) = rslt_lhs
@@ -250,9 +298,7 @@ class Ast():
             return None
         op = tokens[num_consumed]
         offset = num_consumed + 1
-        rslt_rhs = Ast.parse_atom(tokens[offset:])
-        if rslt_rhs is None:
-            rslt_rhs = Ast.parse_grouping_operation(tokens[offset:])
+        rslt_rhs = Ast.parse_binary_operation(tokens[offset:])
         if rslt_rhs is None:
             return None
         (rhs, num_consumed) = rslt_rhs
@@ -316,16 +362,30 @@ print(Ast.format_tree(tree))
 
 print()
 
-source = '(1+2)>0'
+source = '1+2>0'
 tokens = Lexing.lex(source)
-assert(Lexing.serialize_tokens(tokens) == "[[3, '('], [1, 1], [2, '+'], [1, 2], [4, ')'], [5, '>'], [1, 0]]")
+assert(Lexing.serialize_tokens(tokens) == "[[1, 1], [2, '+'], [1, 2], [5, '>'], [1, 0]]")
 tree = Ast.parse(tokens)
 print(Ast.format_tree(tree))
 
 print()
 
-source = '((折线顶(0) - 折线底(0)) / 折线底(0)) >= 0.02'
+source = '(1+2)>0'
 tokens = Lexing.lex(source)
-assert(Lexing.serialize_tokens(tokens) == "[[3, '('], [3, '('], [0, '折线顶'], [3, '('], [1, 0], [4, ')'], [2, '-'], [0, '折线底'], [3, '('], [1, 0], [4, ')'], [4, ')'], [2, '/'], [0, '折线底'], [3, '('], [1, 0], [4, ')'], [4, ')'], [5, '>='], [1, 0.02]]")
+tree = Ast.parse(tokens)
+print(Ast.format_tree(tree))
+
+print()
+
+source = '(1)/2>0'
+tokens = Lexing.lex(source)
+tree = Ast.parse(tokens)
+print(Ast.format_tree(tree))
+
+print()
+
+source = '(折线顶(0) - 折线底(0)) / 折线底(0) >= 0.02'
+tokens = Lexing.lex(source)
+assert(Lexing.serialize_tokens(tokens) == "[[3, '('], [0, '折线顶'], [3, '('], [1, 0], [4, ')'], [2, '-'], [0, '折线底'], [3, '('], [1, 0], [4, ')'], [4, ')'], [2, '/'], [0, '折线底'], [3, '('], [1, 0], [4, ')'], [5, '>='], [1, 0.02]]")
 tree = Ast.parse(tokens)
 print(Ast.format_tree(tree))
